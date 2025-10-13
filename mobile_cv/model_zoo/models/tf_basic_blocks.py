@@ -49,10 +49,14 @@ class ConvBNRelu(tf.keras.layers.Layer):
         self.relu = ReLU() if activation == 'relu' else tf.identity
 
     def call(self, x):
+        sub_hidden_state = []
         x = self.conv(x)
+        sub_hidden_state.append(x)
         x = self.bn(x)
+        sub_hidden_state.append(x)
         x = self.relu(x)
-        return x
+        sub_hidden_state.append(x)
+        return x, sub_hidden_state
     
     def build(self, input_shape):
         if not self.conv.built:
@@ -75,7 +79,7 @@ class IRFBlock(tf.keras.layers.Layer):
         # --- 1. PW Expansion (Optional) ---
         # 只有当 exp_channels > in_channels 时才需要 (即 MobileNet V2 的 'pw')
         if exp_channels != in_channels:
-            self.pw = ConvBNRelu(exp_channels, 1, strides=1, activation='relu', use_bias=False)
+            self.pw = ConvBNRelu(exp_channels, 1, strides=1, activation='relu', use_bias=True)
         else:
             self.pw = None # 或者 Identity
             
@@ -95,7 +99,7 @@ class IRFBlock(tf.keras.layers.Layer):
             padding='same', 
             groups=dw_groups, # dw_groups == exp_channels
             activation='relu', 
-            use_bias=False
+            use_bias=True
         )
 
         # --- 4. PWL Projection (Projection Conv) ---
@@ -106,7 +110,7 @@ class IRFBlock(tf.keras.layers.Layer):
             strides=1, 
             groups=pwl_groups,
             activation=None, 
-            use_bias=False
+            use_bias=True
         )
         
         # --- 5. Residual Connection ---
@@ -115,27 +119,33 @@ class IRFBlock(tf.keras.layers.Layer):
 
     def call(self, inputs):
         x = inputs
+        sub_hidden_states = []
         
         # 1. PW Expansion
         if self.pw is not None:
-            x = self.pw(x)
+            x, _ = self.pw(x)
+            sub_hidden_states.append(x)
             
         # 2. Channel Shuffle
         if self.shuffle is not None:
             x = self.shuffle(x)
-            
+            sub_hidden_states.append(x)
+
         # 3. DW Conv
-        x = self.dw(x)
+        x, _ = self.dw(x)
+        sub_hidden_states.append(x)
         
         # 4. PWL Projection
-        x = self.pwl(x)
+        x, _ = self.pwl(x)
+        sub_hidden_states.append(x)
         
         # 5. Residual Connection
         if self.has_res_conn and self.stride == 1 and self.in_channels == self.out_channels:
             # Only connect if stride=1 AND input/output channels match
             x = self.res_conn([inputs, x])
+            sub_hidden_states.append(x)
             
-        return x
+        return x, sub_hidden_states
 
 # helper weight copy
 def transpose_conv_weights(pt_weight, is_depthwise=False):

@@ -41,13 +41,23 @@ tf_input_tensor = tf.constant(tf_input_np, dtype=tf.float32)
 
 # b) 运行推断
 with torch.no_grad():
-    pt_output = pt_model(input_tensor).numpy()
+    pt_output = pt_model(input_tensor)
 
-tf_output = tf_model(tf_input_tensor, training=False).numpy()
+pt_output = [pt_hidden_state.numpy() for pt_hidden_state in pt_output]
+
+for i in range(len(pt_output)-1):
+    pt_output[i] = np.transpose(pt_output[i], (0, 2, 3, 1))
+
+tf_final_output, tf_output = tf_model(tf_input_tensor, training=False)
+tf_output = [tf_hidden_state.numpy() for tf_hidden_state in tf_output]
 
 # c) 比较输出
-diff = np.max(np.abs(pt_output - tf_output))
-print(f"Max absolute difference between PT and TF outputs: {diff:.6f}")
+for i in range(len(pt_output)):
+    print(f'pt shape {pt_output[i].shape}\ntf shape {tf_output[i].shape}')
+    diff = np.max(np.abs(pt_output[i] - tf_output[i]))
+    avg_diff = np.average(np.abs(pt_output[i] - tf_output[i]))
+    print(f"Max absolute difference between PT and TF outputs: {diff:.6f}")
+    print(f"Average absolute difference between PT and TF outputs: {avg_diff:.6f}")
 
 # 通常，如果差异在 1e-5 或 1e-4 范围内，则认为权重复制成功。
 if diff < 1e-4:

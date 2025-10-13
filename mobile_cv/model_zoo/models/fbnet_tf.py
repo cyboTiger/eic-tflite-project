@@ -1,6 +1,6 @@
 from mobile_cv.model_zoo.models.tf_basic_blocks import *
 import tensorflow as tf
-from tensorflow.keras.layers import Conv2D, BatchNormalization, ReLU, Add, Input
+from tensorflow.keras.layers import Conv2D, BatchNormalization, ReLU, Add, Input, Identity 
 from tensorflow.keras.models import Model
 
 class FBNetBackbone(tf.keras.layers.Layer):
@@ -14,7 +14,7 @@ class FBNetBackbone(tf.keras.layers.Layer):
 
         self.stages = {}
         # xif0_0: Initial Conv
-        self.stages['xif0_0'] = ConvBNRelu(16, 3, strides=2, use_bias=False) # (3, 16, k=3, s=2)
+        self.stages['xif0_0'] = ConvBNRelu(16, 3, strides=2, use_bias=True) # (3, 16, k=3, s=2)
         # xif1_0: Identity (Placeholder/Pass-through)
         self.stages['xif1_0'] = tf.identity
         
@@ -68,15 +68,19 @@ class FBNetBackbone(tf.keras.layers.Layer):
         self.stages['xif5_4'] = IRF(184, 1104, 352, 5, 1)
 
         # xif6_0: Final Conv
-        self.stages['xif6_0'] = ConvBNRelu(1504, 1, strides=1, use_bias=False) # (352, 1504, k=1, s=1)
+        self.stages['xif6_0'] = ConvBNRelu(1504, 1, strides=1, use_bias=True) # (352, 1504, k=1, s=1)
 
     def call(self, x):
         hidden_states = []
         hidden_states.append(x)
         for key in self.stages:
-            x = self.stages[key](x)
-            hidden_states.append(x)
-        return hidden_states
+            if key in ['xif1_0', 'xif2_2', 'xif2_3']:
+                x = self.stages[key](x)
+                hidden_states.append(x)
+            else:
+                x, sub_hidden_state = self.stages[key](x)
+                hidden_states.append(sub_hidden_state)
+        return x, hidden_states
 
 # --- E. FBNet 完整模型 ---
 class FBNetKeras(tf.keras.Model):
@@ -89,7 +93,7 @@ class FBNetKeras(tf.keras.Model):
         self.flatten = tf.keras.layers.Flatten()
 
     def call(self, x):
-        x = self.backbone(x)
+        x, hidden_states = self.backbone(x)
         x = self.avg_pool(x)
         
         # Conv Head requires 4D input, must reshape from (N, C) to (N, 1, 1, C)
@@ -97,7 +101,8 @@ class FBNetKeras(tf.keras.Model):
         
         x = self.conv_head(x) # Conv2d(1504, 1000, kernel_size=(1, 1))
         x = self.flatten(x) # Final output shape (N, 1000)
-        return x
+        hidden_states.append(x)
+        return x, hidden_states
     
 def copy_weight_from_torch_to_tf(pt_state_dict, tf_model):
     # backbone weight copy

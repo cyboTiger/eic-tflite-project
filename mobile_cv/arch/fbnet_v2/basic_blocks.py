@@ -484,15 +484,20 @@ class ConvBNRelu(nn.Module):
         self.conv_full_args = conv_full_args
 
     def forward(self, x):
+        hidden_states = []
         if self.conv is not None:
             x = self.conv(x)
+            hidden_states.append(x)
         if self.bn is not None:
             x = self.bn(x)
+            hidden_states.append(x)
         if self.relu is not None:
             x = self.relu(x)
+            hidden_states.append(x)
         if self.upsample is not None:
             x = self.upsample(x)
-        return x
+            hidden_states.append(x)
+        return hidden_states
 
 
 def antialiased_conv_bn_relu(
