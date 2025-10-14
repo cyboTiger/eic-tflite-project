@@ -209,19 +209,8 @@ class FBNetBackbone(nn.Module):
         return arch_def
 
     def forward(self, x):
-        hidden_states = []
-        hidden_states.append(x)
-        for module in self.stages:
-            state = module(x)
-            if isinstance(state, list):
-                hidden_states.extend(state)
-                x = state[-1]
-            else:
-                hidden_states.append(x)
-                x = state
-        # y = self.stages(x)
-        # return y
-        return hidden_states
+        y = self.stages(x)
+        return y
 
 
 class MetaNetBackbone(nn.Module):
@@ -322,14 +311,8 @@ class MetaNetBackbone(nn.Module):
         return arch_def
 
     def forward(self, x):
-        hidden_states = []
-        hidden_states.append(x)
-        for module in self.stages:
-            x = module(x)
-            hidden_states.append(x)
-        # y = self.stages(x)
-        # return y
-        return hidden_states
+        y = self.stages(x)
+        return y
 
 
 class FBNet(nn.Module):
@@ -359,12 +342,9 @@ class FBNet(nn.Module):
         self.head = ClsConvHead(self.backbone.out_channels, num_classes)
 
     def forward(self, x):
-        y = self.backbone(x)
-        assert isinstance(y, list)
-        z = self.head(y[-1])
-        y.append(z)
-        # y = self.head(y[-1])
-        return y
+        x = self.backbone(x)
+        x = self.head(x)
+        return x
 
     @property
     def arch_def(self):

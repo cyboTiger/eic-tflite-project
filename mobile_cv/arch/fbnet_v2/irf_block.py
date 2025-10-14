@@ -204,17 +204,17 @@ class IRFBlock(nn.Module):
     def forward(self, x):
         y = x
         if self.pw is not None:
-            y = self.pw(y)[-1]
+            y = self.pw(y)
         if self.shuffle is not None:
             y = self.shuffle(y)
         if self.upsample is not None:
             y = self.upsample(y)
         if self.dw is not None:
-            y = self.dw(y)[-1]
+            y = self.dw(y)
         if self.se is not None:
             y = self.se(y)
         if self.pwl is not None:
-            y = self.pwl(y)[-1]
+            y = self.pwl(y)
         if self.res_conn is not None:
             y = self.res_conn(y, x)
         if self.relu is not None:

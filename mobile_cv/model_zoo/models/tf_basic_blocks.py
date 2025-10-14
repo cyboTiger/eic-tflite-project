@@ -1,5 +1,5 @@
 import tensorflow as tf
-from tensorflow.keras.layers import Conv2D, BatchNormalization, ReLU, Add
+from tensorflow.keras.layers import Conv2D, BatchNormalization, ReLU, Add, ZeroPadding2D
 from tensorflow.keras.models import Model
 
 # helper tf layer
@@ -35,13 +35,16 @@ class ChannelShuffle(tf.keras.layers.Layer):
 
 # --- B. ConvBNRelu 块 ---
 class ConvBNRelu(tf.keras.layers.Layer):
-    def __init__(self, filters, kernel_size, strides=1, padding='same', groups=1, activation='relu', use_bias=False, **kwargs):
+    def __init__(self, filters, kernel_size, strides=1, padding='valid', groups=1, activation='relu', use_bias=False, **kwargs):
         super(ConvBNRelu, self).__init__(**kwargs)
+        self.padding = ZeroPadding2D(padding=(padding, padding), 
+                              data_format='channels_last') if padding != 'valid' else None
+        self.padding = padding
         self.conv = Conv2D(
             filters, 
             kernel_size, 
             strides=strides, 
-            padding=padding, 
+            padding='valid', 
             groups=groups, 
             use_bias=use_bias
         )
@@ -49,14 +52,13 @@ class ConvBNRelu(tf.keras.layers.Layer):
         self.relu = ReLU() if activation == 'relu' else tf.identity
 
     def call(self, x):
-        sub_hidden_state = []
+        if self.padding != 'valid':
+            paddings = tf.constant([[0, 0], [self.padding, self.padding], [self.padding, self.padding], [0, 0]]) 
+            x = tf.pad(x, paddings, "CONSTANT")
         x = self.conv(x)
-        sub_hidden_state.append(x)
         x = self.bn(x)
-        sub_hidden_state.append(x)
         x = self.relu(x)
-        sub_hidden_state.append(x)
-        return x, sub_hidden_state
+        return x
     
     def build(self, input_shape):
         if not self.conv.built:
@@ -67,7 +69,7 @@ class ConvBNRelu(tf.keras.layers.Layer):
 # --- C. IRFBlock (Inverted Residual and Fused) ---
 class IRFBlock(tf.keras.layers.Layer):
     def __init__(self, in_channels, exp_channels, out_channels, kernel_size, stride, 
-                 dw_groups, pwl_groups, use_shuffle=False, has_res_conn=False, **kwargs):
+                 dw_groups, pwl_groups, dw_padding=1, use_shuffle=False, has_res_conn=False, **kwargs):
         super(IRFBlock, self).__init__(**kwargs)
         
         self.has_res_conn = has_res_conn
@@ -75,6 +77,7 @@ class IRFBlock(tf.keras.layers.Layer):
         self.stride = stride
         self.in_channels = in_channels
         self.out_channels = out_channels
+        self.dw_padding = dw_padding
         
         # --- 1. PW Expansion (Optional) ---
         # 只有当 exp_channels > in_channels 时才需要 (即 MobileNet V2 的 'pw')
@@ -96,7 +99,7 @@ class IRFBlock(tf.keras.layers.Layer):
             exp_channels, # 输出通道等于输入通道 (exp_channels)
             kernel_size, 
             strides=stride, 
-            padding='same', 
+            padding=dw_padding, 
             groups=dw_groups, # dw_groups == exp_channels
             activation='relu', 
             use_bias=True
@@ -119,33 +122,27 @@ class IRFBlock(tf.keras.layers.Layer):
 
     def call(self, inputs):
         x = inputs
-        sub_hidden_states = []
         
         # 1. PW Expansion
         if self.pw is not None:
-            x, _ = self.pw(x)
-            sub_hidden_states.append(x)
+            x = self.pw(x)
             
         # 2. Channel Shuffle
         if self.shuffle is not None:
             x = self.shuffle(x)
-            sub_hidden_states.append(x)
 
         # 3. DW Conv
-        x, _ = self.dw(x)
-        sub_hidden_states.append(x)
+        x = self.dw(x)
         
         # 4. PWL Projection
-        x, _ = self.pwl(x)
-        sub_hidden_states.append(x)
+        x = self.pwl(x)
         
         # 5. Residual Connection
         if self.has_res_conn and self.stride == 1 and self.in_channels == self.out_channels:
             # Only connect if stride=1 AND input/output channels match
             x = self.res_conn([inputs, x])
-            sub_hidden_states.append(x)
             
-        return x, sub_hidden_states
+        return x
 
 # helper weight copy
 def transpose_conv_weights(pt_weight, is_depthwise=False):
@@ -254,3 +251,61 @@ def load_conv_bn_relu_block(tf_block, pt_prefix, pt_state_dict):
     
     # --- 2. BN 权重加载 ---
     load_bn_weights(tf_block.bn, f'{pt_prefix}.bn', pt_state_dict)
+
+def copy_weight_from_torch_to_tf(pt_state_dict, tf_model):
+    # backbone weight copy
+    for stage_idx, stage_module in tf_model.backbone.stages.items():
+        if isinstance(stage_module, (tf.keras.layers.Identity, type(tf.identity))):
+            print(f"Skipping Identity module: {stage_idx}")
+            continue
+
+        pt_stage_prefix = f'backbone.stages.{stage_idx}'
+
+        # 1. IRFBlock
+        if isinstance(stage_module, IRFBlock):
+            print(f"Loading weights for IRFBlock: {stage_idx}")
+            
+            # --- a) PW 扩展卷积 (Optional) ---
+            if stage_module.pw is not None:
+                load_conv_bn_relu_block(stage_module.pw, f'{pt_stage_prefix}.pw', pt_state_dict)
+            
+            # --- b) DW 深度卷积 (Depthwise Conv) ---
+            # dw 总是存在
+            load_conv_bn_relu_block(stage_module.dw, f'{pt_stage_prefix}.dw', pt_state_dict)
+            
+            # --- c) PWL 投影卷积 ---
+            # pwl 总是存在
+            load_conv_bn_relu_block(stage_module.pwl, f'{pt_stage_prefix}.pwl', pt_state_dict)
+
+        # 2. ConvBNRelu (如 xif0_0, xif6_0)
+        elif isinstance(stage_module, ConvBNRelu):
+            print(f"Loading weights for ConvBNRelu: {stage_idx}")
+            load_conv_bn_relu_block(stage_module, pt_stage_prefix, pt_state_dict)
+            
+        else:
+            print(f"Warning: Unknown module type encountered: {type(stage_module)}")
+        
+    # --- 3. Head 模块 (分类头) ---
+    # 分类头通常是 Conv2D 或 Dense 层，且包含 bias=True
+    
+    # 最后的 Conv2D(1504, 1000, k=1) 
+    head_conv_layer = tf_model.conv_head 
+    pt_head_prefix = 'head.conv' 
+    
+    # 卷积核
+    pt_conv_weight = pt_state_dict[f'{pt_head_prefix}.weight']
+    tf_kernel = transpose_conv_weights(pt_conv_weight) 
+    
+    weight_list = [tf_kernel]
+    # 偏置
+    if head_conv_layer.use_bias:
+        pt_conv_bias = pt_state_dict[f'{pt_head_prefix}.bias'].numpy()
+        weight_list.append(pt_conv_bias)
+    
+    
+    if not head_conv_layer.built:
+        input_shape = (None, None, None, pt_conv_weight.shape[1]) 
+        head_conv_layer.build(input_shape)
+
+    head_conv_layer.set_weights(weight_list)
+    print("Loading weights for Classification Head.")
