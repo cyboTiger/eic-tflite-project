@@ -76,6 +76,7 @@ class FBNetABackbone(tf.keras.layers.Layer):
         return x
 
 # --- E. FBNet 完整模型 ---
+# @tf.keras.saving.register_keras_serializable()
 class FBNetAKeras(tf.keras.Model):
     def __init__(self, num_classes=1000, **kwargs):
         super(FBNetAKeras, self).__init__(**kwargs)
