@@ -2,9 +2,12 @@ import tensorflow as tf
 import numpy as np
 import os
 import random # 用于随机选择样本
+from PIL import Image
 
 from mobile_cv.model_zoo.models.fbnet_tf_a import FBNetAKeras
 from mobile_cv.model_zoo.models.fbnet_v2 import fbnet
+from mobile_cv.model_zoo.models.preprocess import get_preprocess
+
 
 keras_model_path = '/root/autodl-tmp/deploy/fbnet_a.keras'
 keras_model = tf.keras.models.load_model(
@@ -102,8 +105,15 @@ def representative_data_gen():
     for filename in selected_files:
         image_path = os.path.join(IMAGENET_VAL_DIR, filename)
         
+        
         # 预处理
-        processed_image = tf_fbnet_preprocess(image_path)
+        preprocess = get_preprocess(INPUT_CROP_SIZE)
+        image_data = Image.open(image_path)
+        if image_data.mode == 'L':
+            continue
+        processed_image = preprocess(image_data)
+        processed_image = processed_image.numpy()
+        processed_image = np.transpose(processed_image, (1,2,0))
         
         # 添加 Batch 维度 (1, 224, 224, 3)
         processed_image = tf.expand_dims(processed_image, axis=0)

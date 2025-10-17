@@ -66,11 +66,11 @@ else:
     print("❌ Warning: Output difference is large. Check weight transposition and BN loading.")
 
 # 假设您的 Keras 模型对象名为 'keras_model'
-tf_save_dir = 'fbnet_a.keras'
+tf_save_dir = 'fbnet_b.keras'
 # 方式 A: 默认方式 (推荐)
 tf_model.save(tf_save_dir) 
 
-tflite_path = 'fbnet_a.tflite'
+tflite_path = 'fbnet_b.tflite'
 converter = tf.lite.TFLiteConverter.from_keras_model(tf_model)
 # converter.optimizations = [tf.lite.Optimize.DEFAULT]
 tflite_model = converter.convert()
