@@ -20,7 +20,7 @@ First off, the current [onnx2tf library](https://github.com/onnx/onnx-tensorflow
 BackendIsNotSupposedToImplementIt: ReduceMean version 18 is not implemented.
 ```
 
-I have tried my best to modify onnx-tf and corresponding tensorflow lib locally, but still fails. I turned to alternative solution.
+I have tried my best to modify onnx-tf and corresponding tensorflow lib locally, but still fails. So I turned to alternative solution.
 
 #### Manual design
 To probe into the torch architecture of fbnet-a, I printed its debug info as below:
@@ -70,10 +70,45 @@ Based on this, I manually write the [equivalent tensorflow model](mobile_cv/mode
 
 Next, I implemented weight copy from torch to tensorflow model in the [basic block](mobile_cv/model_zoo/models/tf_basic_blocks.py) file. It essentially includes:
 
-+ Conv-BN-Relu Block weight copy at [mobile_cv/model_zoo/models/tf_basic_blocks.py#L194]
++ Conv-BN-Relu Block weight copy at [here](mobile_cv/model_zoo/models/tf_basic_blocks.py#L194)
 
-+ Weight transpose of Conv2d from torch to tensorflow [mobile_cv/model_zoo/models/tf_basic_blocks.py#L148]
++ Weight transpose of Conv2d from torch to tensorflow [here](mobile_cv/model_zoo/models/tf_basic_blocks.py#L148)
 
-### the accuracies of models in PyTorch format, models in tflite compatible model format, unquantized models in tflite format, and quantized models in tflite format
+During the copy process, the most tricky parts lie in: 
 
-### your ideas on how to further improve the model conversion and deployment pipeline, especially when you have a large number of models to convert.
++ the padding of tensorflow Conv2d layer. 
+  [TF Conv2d](https://tensorflow.google.cn/api_docs/python/tf/keras/layers/Conv2D) padding argument only supports 2 options: `'valid'`, meaning no padding,  or `'same'`, meaning padding flexibly to make output size proportional to input size. Weird things will occur for some input height/width, kernel size and stride. 
+  
+  For example, `input_size=(224, 224), kernel_size=(3, 3), stride=(2, 2), padding='same'` in tensorflow will result in asymmetric padding between left and right side of a single image channel. While the corresponding implementation in torch `input_size=(224, 224), kernel_size=(3, 3), stride=(2, 2), padding=(1,1)` will pad evenly to two sides.
+
+  To tackle this, for all the initialization of Conv2d in tensorflow, I adopt `padding='valid'`. When padding is required, I apply `tf.padding` manually before the Conv2d layer.
+
++ Weight transpose of Conv2d before real copy
+  torch conv2d kernel weight shape is `[C_out, C_in, K_H, K_W]`, while tensorflow shape is `[K_H, K_W, C_in, C_out]`. So a permutation of `pt_weight.permute(2, 3, 1, 0)` is required
+
+#### Conversion to tflite format and Verification
+converting to tflite model is simple with following snippet:
+
+```python
+converter = tf.lite.TFLiteConverter.from_keras_model(tf_model)
+# converter.optimizations = [tf.lite.Optimize.DEFAULT]
+tflite_model = converter.convert()
+```
+
+#### Verification
+For verification, I prepared random input of size `(1, 3, 224, 224)` and find the difference between torch/tensorflow/TFLite model ignorable, as in [here](torch2tf_a.py)
+
+### the accuracies of models
+I validated using ImageNet2012-1k validation dataset. But it seems that even the torch model fails to reach high accuracy. I doubt it's because the label alignment issue when training the model. So I measure accuracy using PyTorch model as baseline.
+
+### 模型精度验证结果
+
+| 模型格式 | 描述 | Top-1 精度 |
+| :--- | :--- | :--- |
+| PyTorch | 原始模型（基准） | 100% |
+| TFLite Keras | TensorFlow Keras 模型（转换前的 FP32 基准） | 100% |
+| TFLite FP32 | 转换后的 TFLite 浮点模型 | 100% |
+| TFLite INT8 | TFLite 整数 8 位量化模型 | 84.62% |
+
+### ideas on further improvement ofthe model conversion and deployment pipeline
+especially when you have a large number of models to convert.
