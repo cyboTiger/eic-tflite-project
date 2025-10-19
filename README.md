@@ -101,14 +101,21 @@ For verification, I prepared random input of size `(1, 3, 224, 224)` and find th
 ### the accuracies of models
 I validated using ImageNet2012-1k validation dataset. But it seems that even the torch model fails to reach high accuracy. I doubt it's because the label alignment issue when training the model. So I measure accuracy using PyTorch model as baseline.
 
-### 模型精度验证结果
-
-| 模型格式 | 描述 | Top-1 精度 |
+| Model format | Top-1 accuracy | Top-5 accuracy |
 | :--- | :--- | :--- |
-| PyTorch | 原始模型（基准） | 100% |
-| TFLite Keras | TensorFlow Keras 模型（转换前的 FP32 基准） | 100% |
-| TFLite FP32 | 转换后的 TFLite 浮点模型 | 100% |
-| TFLite INT8 | TFLite 整数 8 位量化模型 | 84.62% |
+| PyTorch | 100% | 100% |
+| TFLite Keras | 100% | 100% | 
+| TFLite FP32 | 100% | 100% | 
+| TFLite INT8 | 84.62% | 98.06% | 
 
 ### ideas on further improvement ofthe model conversion and deployment pipeline
-especially when you have a large number of models to convert.
+Especially when you have a large number of models to convert.
+
+Answer: 
+If these models are all CNN models, I think we could design a intermediate representation that express the hierarchy of these CNN models. It can be in the form of a json/yaml file, each item can either be a struct or a basic module (like linear, Conv, softmax, Norm, ReLU...), with hyperparameters like kernel_size clarified in the readable text file.
+
+In this case, the challenge comes down to 
++ parse the readable file
++ design API between the text form and certain deep learning framework, e.g. PyTorch, Tensorflow, Jax...
+
+If there are also LLM-style models, we can add transformer as a basic module inside the library. And I think it's important to make it easy to extend basic modules to customized operators, so that every developer can upload/merge their own operators to accelerate archtecture designing.
